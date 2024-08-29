@@ -1,36 +1,90 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
 
-import "0x1/Signer.sol";
+import "@openzeppelin/contracts/utils/math/SafeMath.sol";
 
 contract MyToken {
-    using Signer for Signer.SignerType;
+    using SafeMath for uint256;
+
+    struct VestingSchedule {
+        uint256 totalBalance;   // Total tokens vested
+        uint256 startTime;      // Vesting start time (usually TGE)
+        uint256 released;       // Tokens already released
+    }
 
     mapping(address => uint256) public balanceOf;
     mapping(address => VestingSchedule) public vestingSchedules;
 
-    uint256 public constant totalSupply = 10000000;
-    uint256 public constant issuanceDate = 1646064000; // Example issuance date (2022-02-28)
-    uint256 public constant cliffDuration = 36 * 30 days; // 36 months in seconds
-    uint256 public constant vestingDuration = 24 * 30 days; // 24 months in seconds
-    uint256 public constant tgePercentage = 5;
+    uint256 public immutable totalSupply;
+    uint256 public immutable issuanceDate;
+    uint256 public immutable cliffDuration;
+    uint256 public immutable vestingDuration;
+    uint256 public immutable tgePercentage;
 
     event TokensReleased(address indexed beneficiary, uint256 amount);
 
-    constructor() {
+    constructor(
+        uint256 _totalSupply,
+        uint256 _issuanceDate,
+        uint256 _cliffDuration,
+        uint256 _vestingDuration,
+        uint256 _tgePercentage
+    ) {
+        require(_tgePercentage <= 100, "TGE percentage cannot exceed 100");
+        totalSupply = _totalSupply;
+        issuanceDate = _issuanceDate;
+        cliffDuration = _cliffDuration;
+        vestingDuration = _vestingDuration;
+        tgePercentage = _tgePercentage;
+
         balanceOf[msg.sender] = totalSupply;
-        vestingSchedules[msg.sender] = VestingSchedule(totalSupply, block.timestamp);
+
+        // Initialize vesting schedule for the deployer (usually the team or foundation)
+        vestingSchedules[msg.sender] = VestingSchedule(totalSupply, block.timestamp, 0);
     }
 
-    modifier onlySigner {
-        require(msg.sender.is_signer(), "Caller is not a signer");
+    modifier onlyBeneficiary() {
+        require(vestingSchedules[msg.sender].startTime > 0, "No vesting schedule for this address");
         _;
     }
 
-    function releaseTokens() external onlySigner {
-        address beneficiary = msg.sender;
+    function releaseTokens() external onlyBeneficiary {
+        VestingSchedule storage vesting = vestingSchedules[msg.sender];
+        uint256 available = calculateAvailableTokens(msg.sender);
+        require(available > 0, "No tokens available for withdrawal yet");
+
+        vesting.released = vesting.released.add(available);
+        balanceOf[msg.sender] = balanceOf[msg.sender].add(available);
+
+        emit TokensReleased(msg.sender, available);
+    }
+
+    function calculateAvailableTokens(address beneficiary) public view returns (uint256) {
         VestingSchedule storage vesting = vestingSchedules[beneficiary];
-        require(vesting.startTime != 0, "Vesting schedule not initialized");
+
+        uint256 elapsedTime = block.timestamp.sub(vesting.startTime);
+
+        if (elapsedTime < cliffDuration) {
+            return 0;
+        }
+
+        uint256 totalVestedAmount = (vesting.totalBalance.mul(tgePercentage)).div(100);
+        uint256 vestedMonths = elapsedTime.sub(cliffDuration).div(30 days);
+        uint256 additionalVestedAmount = ((vesting.totalBalance.sub(totalVestedAmount)).mul(vestedMonths).mul(10)).div(100);
+
+        uint256 vestedTokens = totalVestedAmount.add(additionalVestedAmount);
+
+        return vestedTokens.sub(vesting.released); // Subtract already released tokens
+    }
+
+    function addVestingSchedule(address beneficiary, uint256 amount) external {
+        require(balanceOf[msg.sender] >= amount, "Insufficient balance to vest");
+        require(vestingSchedules[beneficiary].startTime == 0, "Vesting schedule already exists");
+
+        balanceOf[msg.sender] = balanceOf[msg.sender].sub(amount);
+        vestingSchedules[beneficiary] = VestingSchedule(amount, block.timestamp, 0);
+    }
+}Vesting schedule not initialized");
 
         uint256 available = calculateAvailableTokens(beneficiary);
         require(available > 0, "No tokens available for withdrawal yet");
