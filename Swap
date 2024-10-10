@@ -1,0 +1,52 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+// Интерфейс стандарта ERC-20
+interface IERC20 {
+    function transferFrom(address sender, address recipient, uint256 amount) external returns (bool);
+    function transfer(address recipient, uint256 amount) external returns (bool);
+    function balanceOf(address account) external view returns (uint256);
+}
+
+contract SimpleSwap {
+
+    address public owner;
+    IERC20 public token1; // Первый токен
+    IERC20 public token2; // Второй токен
+    uint256 public rate; // Курс обмена token1 на token2
+
+    event Swap(address indexed user, address tokenSold, address tokenBought, uint256 amountSold, uint256 amountBought);
+
+    constructor(address _token1, address _token2, uint256 _rate) {
+        owner = msg.sender;
+        token1 = IERC20(_token1);
+        token2 = IERC20(_token2);
+        rate = _rate; // Например, 1 token1 = 2 token2
+    }
+
+    // Функция для обмена token1 на token2
+    function swapToken1ForToken2(uint256 _amount) public {
+        uint256 amountToReceive = _amount * rate;
+        require(token2.balanceOf(address(this)) >= amountToReceive, "Недостаточно token2 в контракте");
+
+        // Перемещаем token1 от пользователя к контракту
+        require(token1.transferFrom(msg.sender, address(this), _amount), "Ошибка при переводе token1");
+
+        // Отправляем token2 пользователю
+        require(token2.transfer(msg.sender, amountToReceive), "Ошибка при отправке token2");
+
+        emit Swap(msg.sender, address(token1), address(token2), _amount, amountToReceive);
+    }
+
+    // Функция для обновления курса обмена
+    function updateRate(uint256 newRate) public {
+        require(msg.sender == owner, "Только владелец может изменять курс");
+        rate = newRate;
+    }
+
+    // Функция для вывода токенов из контракта
+    function withdrawTokens(address _token, uint256 _amount) public {
+        require(msg.sender == owner, "Только владелец может выводить токены");
+        IERC20(_token).transfer(owner, _amount);
+    }
+}
